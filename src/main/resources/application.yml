@@ -1,0 +1,52 @@
+quarkus:
+  application:
+    name: nevis-search
+  datasource:
+    db-kind: postgresql
+    username: ${QUARKUS_DATASOURCE_USERNAME:nevis}
+    password: ${QUARKUS_DATASOURCE_PASSWORD:nevis}
+    # No default JDBC URL: when the URL is unset (tests, quarkusDev), Dev Services
+    # starts an isolated pgvector container; compose and smoke runs set the URL.
+    devservices:
+      image-name: pgvector/pgvector:pg17
+  flyway:
+    migrate-at-start: true
+  rest-client:
+    ollama-api:
+      url: ${OLLAMA_URL:http://localhost:11434}
+      connect-timeout: 3000
+      read-timeout: 120000
+  swagger-ui:
+    always-include: true
+
+# The HTTP contract is served verbatim from src/main/resources/META-INF/openapi.yaml;
+# scanning annotations for a second copy of the schema is disabled.
+mp:
+  openapi:
+    scan:
+      disable: true
+
+search:
+  worker:
+    interval: 2s
+    batch-size: 8
+    max-attempts: 3
+  lexical:
+    min-similarity: 0.3
+    max-query-length: 256
+    default-limit: 10
+    max-limit: 50
+  semantic:
+    # nomic-embed-text gives relevant cosines in the 0.5-0.6 band on this
+    # corpus (bills ~0.53, bank statement ~0.48, passport ~0.51); 0.51 keeps
+    # unrelated document kinds out. Recalibrate when swapping the model.
+    min-score: 0.51
+
+ollama:
+  # nomic-embed-text:v1.5 = 768 dims, matches vector(768) in the schema.
+  # Nomic prefixes are applied by the client (query vs document side).
+  embedding-model: ${OLLAMA_EMBED_MODEL:nomic-embed-text:v1.5}
+  embedding-query-prefix: "search_query: "
+  embedding-document-prefix: "search_document: "
+  chat-model: ${OLLAMA_CHAT_MODEL:gemma3:270m}
+  summarize-content-chars: 6000

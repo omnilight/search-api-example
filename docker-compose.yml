@@ -1,0 +1,81 @@
+name: nevis-search
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: nevis
+      POSTGRES_PASSWORD: nevis
+      POSTGRES_DB: nevis
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # for `make dev` (JVM mode against compose infra)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nevis -d nevis"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434" # for `make dev` (JVM mode against compose infra)
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    restart: unless-stopped
+
+  # One-shot job: pre-pulls the embedding and chat models into the volume.
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: ollama:11434
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text:v1.5}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-gemma3:270m}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "ollama pull $$OLLAMA_EMBED_MODEL && ollama pull $$OLLAMA_CHAT_MODEL"
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    environment:
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://postgres:5432/nevis
+      QUARKUS_DATASOURCE_USERNAME: nevis
+      QUARKUS_DATASOURCE_PASSWORD: nevis
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text:v1.5}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-gemma3:270m}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # docker compose --profile demo up: seeds demo data and prints sample searches.
+  seed:
+    profiles: ["demo"]
+    image: curlimages/curl:8.11.1
+    depends_on:
+      - app
+    volumes:
+      - ./compose/seed:/seed:ro
+    entrypoint: ["/bin/sh", "/seed/seed.sh"]
+
+volumes:
+  pgdata:
+  ollama:

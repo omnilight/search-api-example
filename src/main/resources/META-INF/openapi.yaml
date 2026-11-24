@@ -1,0 +1,362 @@
+openapi: 3.1.0
+info:
+  title: Nevis Search API
+  version: 1.0.0
+  description: |
+    Search API across clients and their documents: lexical client search
+    (pg_trgm) plus semantic document search (pgvector with a local model).
+
+    This document is the single source of truth for the HTTP contract: the
+    Kotlin request/response models under `com.neviswealth.search.generated.model`
+    are generated from it at build time. Routes, domain logic and SQL stay
+    handwritten.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: clients
+  - name: documents
+  - name: search
+
+paths:
+  /clients:
+    post:
+      tags: [clients]
+      operationId: createClient
+      summary: Create a client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateClientRequest'
+      responses:
+        '201':
+          description: Client created
+          headers:
+            Location:
+              description: URL of the created client
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /clients/{id}:
+    get:
+      tags: [clients]
+      operationId: getClient
+      summary: Fetch a client
+      parameters:
+        - $ref: '#/components/parameters/ClientIdPath'
+      responses:
+        '200':
+          description: Client found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /clients/{client_id}/documents:
+    post:
+      tags: [documents]
+      operationId: createDocument
+      summary: Attach a document to a client
+      parameters:
+        - $ref: '#/components/parameters/ClientIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDocumentRequest'
+      responses:
+        '201':
+          description: Document created
+          headers:
+            Location:
+              description: URL of the created document
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      tags: [documents]
+      operationId: listDocuments
+      summary: List documents of a client
+      parameters:
+        - $ref: '#/components/parameters/ClientIdParam'
+      responses:
+        '200':
+          description: Documents of the client (without content)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentSummary'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /clients/{client_id}/documents/{document_id}:
+    get:
+      tags: [documents]
+      operationId: getDocument
+      summary: Fetch one document with content and summary
+      parameters:
+        - $ref: '#/components/parameters/ClientIdParam'
+        - $ref: '#/components/parameters/DocumentIdParam'
+      responses:
+        '200':
+          description: Document found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /search:
+    get:
+      tags: [search]
+      operationId: search
+      summary: Search clients and documents
+      description: |
+        Returns one ranked list of clients (lexical) and documents (semantic +
+        lexical). Scores are per type and not comparable across types.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query
+          schema:
+            type: string
+            maxLength: 256
+        - name: type
+          in: query
+          required: false
+          description: Restrict results to a single type
+          schema:
+            type: string
+            enum: [client, document]
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of results, 1-50, default 10
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Ranked results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SearchResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+components:
+  parameters:
+    ClientIdPath:
+      name: id
+      in: path
+      required: true
+      description: Client id
+      schema:
+        type: string
+        format: uuid
+    ClientIdParam:
+      name: client_id
+      in: path
+      required: true
+      description: Client id
+      schema:
+        type: string
+        format: uuid
+    DocumentIdParam:
+      name: document_id
+      in: path
+      required: true
+      description: Document id
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Validation failed (RFC 7807 problem document)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Resource not found (RFC 7807 problem document)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: Email already in use (RFC 7807 problem document)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+    CreateClientRequest:
+      type: object
+      required: [first_name, last_name, email]
+      properties:
+        first_name:
+          type: string
+          maxLength: 200
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.NotBlank @field:jakarta.validation.constraints.Size(max = 200)'
+        last_name:
+          type: string
+          maxLength: 200
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.NotBlank @field:jakarta.validation.constraints.Size(max = 200)'
+        email:
+          type: string
+          format: email
+          maxLength: 320
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.NotBlank @field:jakarta.validation.constraints.Email @field:jakarta.validation.constraints.Size(max = 320)'
+        description:
+          type: string
+          maxLength: 10000
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.Size(max = 10000)'
+        social_links:
+          type: array
+          maxItems: 20
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.Size(max = 20)'
+          items:
+            type: string
+
+    CreateDocumentRequest:
+      type: object
+      required: [title, content]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.NotBlank @field:jakarta.validation.constraints.Size(max = 500)'
+        content:
+          type: string
+          maxLength: 50000
+          x-field-extra-annotation: '@field:jakarta.validation.constraints.NotBlank @field:jakarta.validation.constraints.Size(max = 50000)'
+
+    Client:
+      type: object
+      required: [id, first_name, last_name, email, social_links, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+          format: email
+        description:
+          type: string
+        social_links:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Document:
+      type: object
+      required: [id, client_id, title, content, index_status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          type: string
+        summary:
+          type: string
+        index_status:
+          type: string
+          enum: [pending, indexing, indexed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    DocumentSummary:
+      type: object
+      required: [id, client_id, title, index_status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        summary:
+          type: string
+        index_status:
+          type: string
+          enum: [pending, indexing, indexed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    SearchResult:
+      type: object
+      required: [type, score, matched]
+      properties:
+        type:
+          type: string
+          enum: [client, document]
+        score:
+          type: number
+          format: double
+        matched:
+          type: array
+          items:
+            type: string
+        snippet:
+          type: string
+        client:
+          $ref: '#/components/schemas/Client'
+        document:
+          $ref: '#/components/schemas/DocumentSummary'
+
+    Problem:
+      type: object
+      required: [title, status]
+      properties:
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string

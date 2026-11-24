@@ -1,0 +1,13 @@
+.git
+.gradle
+build
+.idea
+.vscode
+compose
+docs
+README.md
+AGENTS.md
+Dockerfile
+docker-compose.yml
+.dockerignore
+src/test
