@@ -1,6 +1,9 @@
 quarkus:
   application:
     name: nevis-search
+  analytics:
+    # keeps quarkusDev from prompting on every start
+    disabled: true
   datasource:
     db-kind: postgresql
     username: ${QUARKUS_DATASOURCE_USERNAME:nevis}
@@ -9,13 +12,24 @@ quarkus:
     # starts an isolated pgvector container; compose and smoke runs set the URL.
     devservices:
       image-name: pgvector/pgvector:pg17
+    jdbc:
+      # Session settings the search SQL relies on, applied when a physical
+      # connection is created (off the per-request path): the trigram
+      # threshold behind the `%` operator and the HNSW search width.
+      new-connection-sql: "SET pg_trgm.similarity_threshold = ${search.lexical.min-similarity}; SET hnsw.ef_search = ${search.semantic.ef-search}"
   flyway:
     migrate-at-start: true
   rest-client:
+    # Indexing and summaries may take long; the search path uses a second
+    # client with a short budget so a slow or down Ollama degrades to lexical.
     ollama-api:
       url: ${OLLAMA_URL:http://localhost:11434}
       connect-timeout: 3000
       read-timeout: 120000
+    ollama-query-api:
+      url: ${OLLAMA_URL:http://localhost:11434}
+      connect-timeout: 250
+      read-timeout: ${OLLAMA_QUERY_TIMEOUT_MS:500}
   swagger-ui:
     always-include: true
 
@@ -36,16 +50,27 @@ search:
     max-query-length: 256
     default-limit: 10
     max-limit: 50
+    # Candidates read from the match set before ranking: bounds the sort for
+    # very common terms (early cutoff) at the cost of sampling the match set.
+    candidate-limit: 256
   semantic:
     # nomic-embed-text gives relevant cosines in the 0.5-0.6 band on this
     # corpus (bills ~0.53, bank statement ~0.48, passport ~0.51); 0.51 keeps
     # unrelated document kinds out. Recalibrate when swapping the model.
     min-score: 0.51
+    # Nearest chunks read from the HNSW index before deduplicating per document.
+    chunk-candidates: 200
+    # pgvector default (40) misses most exact neighbours at these counts:
+    # measured recall needs ~400. Must be >= chunk-candidates.
+    ef-search: 400
 
 ollama:
   # nomic-embed-text:v1.5 = 768 dims, matches vector(768) in the schema.
   # Nomic prefixes are applied by the client (query vs document side).
   embedding-model: ${OLLAMA_EMBED_MODEL:nomic-embed-text:v1.5}
+  # Ollama CPU threads for embeddings and summaries (measured: matches a 2-CPU
+  # quota; without it the 20+1 read workload saturates the model queue).
+  num-threads: ${OLLAMA_NUM_THREADS:2}
   embedding-query-prefix: "search_query: "
   embedding-document-prefix: "search_document: "
   chat-model: ${OLLAMA_CHAT_MODEL:gemma3:270m}

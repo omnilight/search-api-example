@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help up down demo logs dev test lint fmt native psql clean
+.PHONY: help up down purge demo logs dev test lint fmt native psql clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -15,10 +15,17 @@ demo: ## Start the stack and seed demo data, then print example searches
 down: ## Stop the stack and remove containers
 	docker compose down
 
+purge: ## Remove the Compose stack, local images and volumes (database and models)
+	docker compose --profile '*' down --volumes --remove-orphans --rmi local
+
 logs: ## Follow API logs
 	docker compose logs -f app
 
-dev: ## Run the API locally in JVM dev mode (Dev Services starts Postgres; Ollama via compose)
+dev: ## Run the API on the host with hot reload against Compose Postgres + Ollama
+	docker compose up -d --wait postgres ollama
+	docker compose up --abort-on-container-exit --exit-code-from ollama-init ollama-init
+	QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://localhost:5432/nevis \
+	OLLAMA_URL=http://localhost:11434 \
 	mise exec -- ./gradlew quarkusDev
 
 test: ## Run tests (starts a throwaway pgvector container via Dev Services)

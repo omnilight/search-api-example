@@ -32,6 +32,11 @@ dependencies {
     implementation("io.quarkus:quarkus-rest-client-jackson")
     implementation("io.quarkus:quarkus-config-yaml")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    // Exposed JDBC DSL, used by the simple CRUD adapters; raw SQL stays for
+    // pg_trgm/pgvector and the SKIP LOCKED queue.
+    implementation("org.jetbrains.exposed:exposed-core:1.6.1")
+    implementation("org.jetbrains.exposed:exposed-jdbc:1.6.1")
+    implementation("org.jetbrains.exposed:exposed-java-time:1.6.1")
 
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.rest-assured:rest-assured")
@@ -44,10 +49,11 @@ java {
     }
 }
 
-// Spec-first: src/main/resources/META-INF/openapi.yaml is the single source of
-// truth for the HTTP contract. Only the DTOs are generated (routes, domain and
-// SQL stay handwritten); the generated sources live in build/generated and are
-// compiled together with the handwritten Kotlin code.
+// The OpenAPI contract defines the HTTP DTOs. Keep a generated copy in the
+// source tree so reviewers can read the DTOs before running Gradle.
+val generatedApiSources = layout.buildDirectory.dir("generated/src/main/kotlin")
+val checkedInApiSources = layout.projectDirectory.dir("src/generated/kotlin")
+
 openApiGenerate {
     generatorName.set("kotlin")
     library.set("jvm-microprofile")
@@ -60,37 +66,62 @@ openApiGenerate {
             "useJakartaEe" to "true",
         ),
     )
-    // Empty lists mean "all models, no API interfaces".
-    globalProperties.set(
-        mapOf(
-            "apis" to "",
-            "models" to "",
-        ),
-    )
+    globalProperties.set(mapOf("models" to ""))
+    cleanupOutput.set(true)
     generateApiTests.set(false)
     generateModelTests.set(false)
     generateApiDocumentation.set(false)
     generateModelDocumentation.set(false)
 }
 
-tasks.openApiGenerate {
-    doLast {
-        // Only the HTTP DTOs are consumed; the generated client/API scaffolding
-        // under org/openapitools is not part of the service.
-        project.delete(file(layout.buildDirectory.dir("generated/src/main/kotlin/org")))
-    }
+val syncApiModels by tasks.registering(Sync::class) {
+    group = "build"
+    description = "Update the HTTP DTOs in src/generated/kotlin from OpenAPI."
+    dependsOn(tasks.openApiGenerate)
+    from(generatedApiSources)
+    into(checkedInApiSources)
 }
 
-sourceSets {
-    main {
-        kotlin {
-            srcDir(layout.buildDirectory.dir("generated/src/main/kotlin"))
+val checkApiModels by tasks.registering {
+    group = "verification"
+    description = "Check that the HTTP DTOs in src/generated/kotlin match OpenAPI."
+    dependsOn(tasks.openApiGenerate)
+    mustRunAfter(syncApiModels)
+    inputs.dir(generatedApiSources)
+    inputs.dir(checkedInApiSources)
+    doLast {
+        val generated = generatedApiSources.get().asFile
+        val checkedIn = checkedInApiSources.asFile
+
+        fun pathsUnder(root: File) =
+            root
+                .walkTopDown()
+                .filter(File::isFile)
+                .map { it.relativeTo(root).path }
+                .toSet()
+
+        val paths = pathsUnder(generated)
+        check(
+            paths == pathsUnder(checkedIn) &&
+                paths.all { generated.resolve(it).readBytes().contentEquals(checkedIn.resolve(it).readBytes()) },
+        ) {
+            "HTTP DTOs are out of date. Run ./gradlew syncApiModels and include the updated sources."
         }
     }
 }
 
+tasks.check {
+    dependsOn(checkApiModels)
+}
+
+sourceSets {
+    main {
+        kotlin.srcDir(checkedInApiSources)
+    }
+}
+
 tasks.compileKotlin {
-    dependsOn(tasks.openApiGenerate)
+    mustRunAfter(syncApiModels)
 }
 
 tasks.withType<Test> {
@@ -105,10 +136,8 @@ ktlint {
     }
 }
 
-// Fails on generated Kotlin changes the ktlint task's inputs while Gradle is
-// still producing them: run generation first, and lint the handwritten code.
-tasks.matching { it.name.lowercase().contains("ktlint") }.configureEach {
-    dependsOn(tasks.openApiGenerate)
+tasks.matching { it.name.startsWith("runKtlint") }.configureEach {
+    mustRunAfter(syncApiModels)
 }
 
 allOpen {

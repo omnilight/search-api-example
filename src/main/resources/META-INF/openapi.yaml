@@ -96,17 +96,36 @@ paths:
       tags: [documents]
       operationId: listDocuments
       summary: List documents of a client
+      description: |
+        Keyset pagination over the client's documents, newest first:
+        ordered by created_at DESC, id DESC. Pass `next_cursor` from the
+        previous page as `cursor`.
       parameters:
         - $ref: '#/components/parameters/ClientIdParam'
+        - name: limit
+          in: query
+          required: false
+          description: Page size (default 50, maximum 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor returned as `next_cursor` by the previous page
+          schema:
+            type: string
       responses:
         '200':
-          description: Documents of the client (without content)
+          description: A page of the client's documents (without content)
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/DocumentSummary'
+                $ref: '#/components/schemas/DocumentPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -201,7 +220,10 @@ components:
 
   responses:
     BadRequest:
-      description: Validation failed (RFC 7807 problem document)
+      description: |
+        Validation failed (RFC 7807 problem document). A body that cannot be
+        parsed at all — malformed JSON or missing required properties — is
+        rejected by the framework with 400 and no body.
       content:
         application/problem+json:
           schema:
@@ -328,6 +350,18 @@ components:
         created_at:
           type: string
           format: date-time
+
+    DocumentPage:
+      type: object
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentSummary'
+        next_cursor:
+          type: string
+          description: Pass back as `cursor` to fetch the next page; absent on the last page.
 
     SearchResult:
       type: object

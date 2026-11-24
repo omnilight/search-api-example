@@ -1,8 +1,8 @@
 package com.neviswealth.search
 
-import com.neviswealth.search.llm.LlmClient
-import com.neviswealth.search.llm.LlmHardException
-import com.neviswealth.search.llm.LlmTransientException
+import com.neviswealth.search.domain.llm.LlmClient
+import com.neviswealth.search.domain.llm.LlmHardException
+import com.neviswealth.search.domain.llm.LlmTransientException
 import io.quarkus.test.junit.QuarkusTestProfile
 import jakarta.annotation.Priority
 import jakarta.enterprise.context.ApplicationScoped
@@ -28,10 +28,18 @@ class FakeLlmClient : LlmClient {
 
         @JvmStatic var summaryFailure: Boolean = false
 
+        /** Makes embedDocuments return wrong-size vectors to provoke a storage failure. */
+        @JvmStatic var badVectorDimensions: Boolean = false
+
+        /** When set, embedding any text containing this marker fails (hard). */
+        @JvmStatic var poisonMarker: String? = null
+
         fun reset() {
             transientFailure = false
             hardFailure = false
             summaryFailure = false
+            badVectorDimensions = false
+            poisonMarker = null
         }
 
         fun vectorFor(text: String): FloatArray {
@@ -49,7 +57,7 @@ class FakeLlmClient : LlmClient {
         private fun randomVec(seed: String): FloatArray {
             val random = java.util.Random(seed.hashCode().toLong())
             val raw = FloatArray(768) { random.nextFloat() - 0.5f }
-            val norm = sqrt(raw.map { it * it.toDouble() }.sum()).toFloat()
+            val norm = sqrt(raw.sumOf { (it * it).toDouble() }).toFloat()
             return FloatArray(768) { i -> raw[i] / norm }
         }
     }
@@ -60,7 +68,15 @@ class FakeLlmClient : LlmClient {
         return vectorFor(text)
     }
 
-    override fun embedDocuments(texts: List<String>): List<FloatArray> = texts.map { embedQuery(it) }
+    override fun embedDocuments(texts: List<String>): List<FloatArray> {
+        if (transientFailure) throw LlmTransientException("fake transient failure")
+        if (hardFailure) throw LlmHardException("fake hard failure")
+        poisonMarker?.let { marker ->
+            if (texts.any { it.contains(marker) }) throw LlmHardException("fake poison marker")
+        }
+        if (badVectorDimensions) return texts.map { FloatArray(3) { 0.1f } }
+        return texts.map { vectorFor(it) }
+    }
 
     override fun summarize(
         title: String,

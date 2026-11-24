@@ -12,6 +12,7 @@ COPY gradle/wrapper gradle/wrapper
 # Only main sources are needed for the native image: test-only edits and the
 # docs around the repo do not invalidate this stage.
 COPY src/main src/main
+COPY src/generated src/generated
 
 # Gradle home lives in a BuildKit cache mount, not in an image layer:
 # dependency jars, the wrapper distribution and the Gradle build cache
@@ -27,10 +28,14 @@ RUN --mount=type=cache,id=nevis-gradle,target=/root/.gradle,sharing=locked \
         -Dquarkus.native.container-build=false \
         -Dquarkus.native.additional-build-args=-J-Xmx3g
 
+# Quarkus restores the final runner in build/ on Gradle cache hits.
+RUN install -T -m 0755 build/*-runner /project/application \
+    && test -s /project/application
+
 # ---- Stage 2: single native binary on a minimal runtime image ----
 FROM quay.io/quarkus/quarkus-micro-image:2.0
 WORKDIR /work
-COPY --from=build --chown=1001:0 /project/build/*-native-image-source-jar/*-runner /work/application
+COPY --from=build --chown=1001:0 /project/application /work/application
 RUN chmod 775 /work
 USER 1001
 EXPOSE 8080
