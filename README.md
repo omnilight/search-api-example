@@ -1,10 +1,17 @@
 # Nevis Search API
 
-A Kotlin and Quarkus REST API for searching clients and their documents.
+Search across clients and their documents. The service uses Kotlin, Quarkus, PostgreSQL with `pg_trgm` and `pgvector`, and Ollama. Docker Compose runs the local stack.
 
-Request and response types are defined under `components.schemas` in the
-[OpenAPI contract](src/main/resources/META-INF/openapi.yaml). The [generated DTOs](src/generated/kotlin/com/neviswealth/search/generated/model) are available for review in the source tree.
-The [Kotlin mappers](src/main/kotlin/com/neviswealth/search/entrypoint/api/DtoMappers.kt) show how they map to the domain models.
+## API
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /clients` | Create a client |
+| `GET /clients/{id}` | Fetch a client |
+| `POST /clients/{client_id}/documents` | Attach a document to a client |
+| `GET /clients/{client_id}/documents` | List a client's documents with cursor pagination |
+| `GET /clients/{client_id}/documents/{document_id}` | Fetch a document with its content and summary |
+| `GET /search?q=...` | Search clients by email, name or description and documents by text or meaning |
 
 ## How it works
 
@@ -37,11 +44,29 @@ make dev
 
 ## Try the demo
 
+On a fresh stack, seed sample clients and documents and wait for indexing.
+
 ```bash
 make demo
 ```
 
-The demo seeds sample data and prints example search responses. `NevisWealth` finds `john.doe@neviswealth.com`, and `address proof` finds the utility bill.
+The responses below show the matching hit with selected fields and rounded scores.
+
+```bash
+curl 'http://localhost:8080/search?q=NevisWealth'
+```
+
+```json
+[{"type":"client","score":1.0,"client":{"email":"john.doe@neviswealth.com"}}]
+```
+
+```bash
+curl 'http://localhost:8080/search?q=address%20proof'
+```
+
+```json
+[{"type":"document","score":0.533,"document":{"title":"Utility bill for 42 Baker Street"}}]
+```
 
 ## Check changes
 
@@ -52,4 +77,4 @@ make test
 
 Use `make fmt` to format Kotlin. Tests start a temporary PostgreSQL container and use a fake LLM. Run `make help` for all commands.
 
-After editing the OpenAPI contract, run `mise exec -- ./gradlew syncApiModels`. Gradle checks for stale DTOs during `build`.
+After editing the [OpenAPI contract](src/main/resources/META-INF/openapi.yaml), run `mise exec -- ./gradlew syncApiModels`. Gradle checks for stale DTOs during `build`.

@@ -5,12 +5,15 @@ import com.neviswealth.search.domain.client.ClientNotFoundException
 import com.neviswealth.search.domain.document.InvalidPaginationException
 import com.neviswealth.search.domain.query.InvalidSearchQueryException
 import com.neviswealth.search.generated.model.Problem
+import io.quarkus.runtime.annotations.RegisterForReflection
 import jakarta.validation.ConstraintViolationException
 import jakarta.ws.rs.BadRequestException
 import jakarta.ws.rs.NotFoundException
 import jakarta.ws.rs.core.Response
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper
 
+// The DTO is returned as an untyped Response entity, so Quarkus cannot infer it.
+@RegisterForReflection(targets = [Problem::class])
 object Problems {
     fun of(
         status: Int,
